@@ -1,0 +1,22 @@
+{
+	"name": "blueprint-blank-astro",
+	"type": "module",
+	"version": "0.1.0",
+	"private": true,
+	"scripts": {
+		"dev": "astro dev",
+		"build": "astro build",
+		"preview": "astro preview",
+		"astro": "astro"
+	},
+	"devDependencies": {
+		"@storyblok/astro": "^9.0.0",
+		"astro": "^6.0.8",
+		"vite": "^7.1.7",
+		"vite-plugin-mkcert": "^1.17.10"
+	},
+	"dependencies": {
+		"@astrojs/netlify": "^7.0.4",
+		"@astrojs/vercel": "^10.0.2"
+	}
+}
