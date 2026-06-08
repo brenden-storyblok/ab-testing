@@ -1,3 +1,14 @@
 [build]
   command = "astro build"
   publish = "dist"
+
+[dev]
+  # Run Astro over HTTP on the proxy target (4321) via the dev:netlify script
+  # (DISABLE_DEV_HTTPS=1 skips vite-plugin-mkcert). netlify dev's proxy cannot
+  # reach an HTTPS target, so the target must be HTTP; TLS is terminated here on
+  # port 8888 instead, via the cert/key below. Plain `npm run dev` keeps HTTPS.
+  command = "npm run dev:netlify"
+  targetPort = 4321
+  [dev.https]
+    certFile = "certificates/localhost.pem"
+    keyFile = "certificates/localhost-key.pem"

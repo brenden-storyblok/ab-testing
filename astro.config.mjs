@@ -3,7 +3,6 @@ import { storyblok } from '@storyblok/astro';
 import { loadEnv } from 'vite';
 import mkcert from 'vite-plugin-mkcert';
 
-import vercel from '@astrojs/vercel';
 import netlify from '@astrojs/netlify';
 
 const env = loadEnv(import.meta.env.MODE, process.cwd(), '');
@@ -38,8 +37,12 @@ export default defineConfig({
 		}),
 	],
 	output: 'server',
-	adapter: NETLIFY ? netlify() : vercel(),
+	adapter:  netlify() ,
 	vite: {
-		plugins: [mkcert()],
+		// mkcert serves the Astro dev server over HTTPS for the Storyblok Visual
+		// Editor. Skipped when DISABLE_DEV_HTTPS is set: under `netlify dev` Astro
+		// runs HTTP on the proxy target (4321) and Netlify terminates TLS on 8888,
+		// because netlify dev's proxy cannot reach an HTTPS target.
+		plugins: process.env.DISABLE_DEV_HTTPS ? [] : [mkcert()],
 	},
 });
