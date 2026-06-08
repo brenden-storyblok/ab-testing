@@ -5,8 +5,8 @@
  *
  * The metrics record is the durable Blobs-backed state for an experiment. It
  * stores:
- *   - A roster of variant entries (seeded from experiment.variants, refreshed
- *     on each write for that experiment).
+ *   - A roster of variant entries (seeded once from experiment.variants on the
+ *     first write for that experiment, then read from the stored record).
  *   - Per-variant { impressions, conversions } counts.
  *
  * This file only defines the domain types and pure transform functions.
@@ -46,7 +46,7 @@ export interface VariantCount {
  * experiment id. `roster` and `counts` are parallel by `public_id`.
  */
 export interface ExperimentMetrics {
-	/** Ordered variant metadata — seeded once, refreshed on each write. */
+	/** Ordered variant metadata — seeded once on the first write. */
 	roster: RosterEntry[];
 	/**
 	 * Per-variant metric counts, keyed by variant `public_id`.
@@ -73,34 +73,38 @@ export function buildRoster(variants: Variant[]): RosterEntry[] {
 }
 
 /**
- * Refresh the roster from the current variants, preserving existing counts.
+ * Seed the roster from the experiment's variants — once.
  *
- * Idempotent: counts for variants already present are carried over untouched;
- * entries for variants not yet present are initialised to zero. Handles the
- * case where variants change between writes without disturbing accumulated data.
+ * If the record already has a roster, it is returned unchanged: the roster is
+ * read from the stored record on every subsequent write, never rebuilt. This
+ * keeps writes cheap and, crucially, can never discard accumulated counts.
  *
- * Returns a new metrics record — the input is not mutated.
+ * Trade-off: a variant added or renamed *after* the first write is not picked
+ * up in the roster (its impressions still accumulate via incrementImpression's
+ * fallback, but it has no roster metadata). Acceptable for fixed-variant
+ * experiments and consistent with ADR-0002's current-tallies-only posture.
+ *
+ * Returns a new record only when seeding; otherwise returns the input as-is.
  */
 export function seedRoster(
 	metrics: ExperimentMetrics,
 	variants: Variant[],
 ): ExperimentMetrics {
-	const nextRoster = buildRoster(variants);
+	// Already seeded — read the existing roster/counts from the record.
+	if (metrics.roster.length > 0) {
+		return metrics;
+	}
 
-	// Build a counts map that preserves any existing counts and initialises
-	// entries for any variants not yet present.
-	const nextCounts: Record<string, VariantCount> = {};
-	for (const rosterEntry of nextRoster) {
-		nextCounts[rosterEntry.public_id] = metrics.counts[rosterEntry.public_id] ?? {
+	const roster = buildRoster(variants);
+	const counts: Record<string, VariantCount> = {};
+	for (const rosterEntry of roster) {
+		counts[rosterEntry.public_id] = metrics.counts[rosterEntry.public_id] ?? {
 			impressions: 0,
 			conversions: 0,
 		};
 	}
 
-	return {
-		roster: nextRoster,
-		counts: nextCounts,
-	};
+	return { roster, counts };
 }
 
 /**
