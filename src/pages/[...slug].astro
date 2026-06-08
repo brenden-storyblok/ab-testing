@@ -2,15 +2,72 @@
 import { useStoryblokApi } from '@storyblok/astro';
 import StoryblokComponent from '@storyblok/astro/StoryblokComponent.astro';
 import Layout from '../layouts/Layout.astro';
+import {
+	resolveExperiment,
+	type Experiment,
+} from '../lib/experiments';
 
 const { slug } = Astro.params;
+const resolvedSlug = slug || 'home';
 
 const storyblokApi = useStoryblokApi();
-const { data } = await storyblokApi.get(`cdn/stories/${slug || 'home'}`, {
-	version: 'draft'
-});
 
-const story = data.story;
+// Visual Editor detection — skip experiments entirely and preview draft content
+// so the editor's variants toggle controls what is shown.
+const isVisualEditor = Astro.url.searchParams.has('_storyblok');
+const version = isVisualEditor ? 'draft' : 'published';
+
+// Fetch the requested story first. Its id and full_slug drive experiment
+// matching and variant-story remapping (per the Storyblok delivery docs).
+const { data: storyData } = await storyblokApi.get(`cdn/stories/${resolvedSlug}`, {
+	version,
+});
+let story = storyData.story;
+
+if (!isVisualEditor) {
+	// Fetch the running experiments (the CDN endpoint only returns running ones).
+	let experiments: Experiment[] = [];
+	try {
+		const { data: experimentsData } = await storyblokApi.get('cdn/experiments', {});
+		experiments = (experimentsData?.experiments ?? []) as Experiment[];
+	} catch {
+		// Minimal fail-open — full hardening (timeouts, variant-404) is issue #8.
+	}
+
+	// Resolve the variant. IO stays here: the core reads the stickiness cookie
+	// through the injected reader and tells us whether to persist / remap.
+	const decision = resolveExperiment({
+		story: { id: story.id, full_slug: story.full_slug },
+		experiments,
+		readCookie: (experimentId) =>
+			Astro.cookies.get(`sb_exp_${experimentId}`)?.value ?? undefined,
+	});
+
+	// Persist the stickiness cookie on a fresh weighted pick.
+	if (decision.persist && decision.experiment && decision.variant) {
+		const thirtyDaysInSeconds = 60 * 60 * 24 * 30;
+		Astro.cookies.set(
+			`sb_exp_${decision.experiment.id}`,
+			decision.variant.public_id,
+			{
+				httpOnly: true,
+				sameSite: 'lax',
+				path: '/',
+				maxAge: thirtyDaysInSeconds,
+			},
+		);
+	}
+
+	// Remap to the variant story only for a non-control variant with a mapping.
+	// A null variantStorySlug means "render the original story already fetched".
+	if (decision.variantStorySlug) {
+		const { data: variantData } = await storyblokApi.get(
+			`cdn/stories/${decision.variantStorySlug}`,
+			{ version: 'published' },
+		);
+		story = variantData.story;
+	}
+}
 ---
 
 <Layout>

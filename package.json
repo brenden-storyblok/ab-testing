@@ -7,13 +7,17 @@
 		"dev": "astro dev",
 		"build": "astro build",
 		"preview": "astro preview",
-		"astro": "astro"
+		"astro": "astro",
+		"test": "vitest run"
 	},
 	"devDependencies": {
+		"@astrojs/check": "^0.9.9",
 		"@storyblok/astro": "^9.0.0",
 		"astro": "^6.0.8",
+		"typescript": "^5.9.3",
 		"vite": "^7.1.7",
-		"vite-plugin-mkcert": "^1.17.10"
+		"vite-plugin-mkcert": "^1.17.10",
+		"vitest": "^4.1.8"
 	},
 	"dependencies": {
 		"@astrojs/netlify": "^7.0.4",
