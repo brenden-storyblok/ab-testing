@@ -2,12 +2,79 @@
 import { useStoryblokApi } from '@storyblok/astro';
 import StoryblokComponent from '@storyblok/astro/StoryblokComponent.astro';
 import Layout from '../layouts/Layout.astro';
+import {
+	findExperimentForSlug,
+	resolveExperimentForRequest,
+	type Experiment,
+} from '../lib/experiments';
 
 const { slug } = Astro.params;
+const resolvedSlug = slug || 'home';
 
 const storyblokApi = useStoryblokApi();
-const { data } = await storyblokApi.get(`cdn/stories/${slug || 'home'}`, {
-	version: 'draft'
+
+// ---------------------------------------------------------------------------
+// Visual Editor detection — skip experiments entirely and render draft.
+// ---------------------------------------------------------------------------
+const isVisualEditor = Astro.url.searchParams.has('_storyblok');
+
+let storySlug = resolvedSlug;
+
+if (!isVisualEditor) {
+	// -----------------------------------------------------------------------
+	// Live traffic — resolve variant via experiments.
+	// -----------------------------------------------------------------------
+	// Fetch experiments once. We read the cookie for the matched experiment, so
+	// we need to identify the experiment first from the fetched list.
+	let experiments: Experiment[] = [];
+	try {
+		const { data } = await storyblokApi.get('cdn/experiments', {});
+		// CDN API returns { experiments: [...], cv: number }
+		// Only running experiments are returned by the API.
+		experiments = (data?.experiments ?? []) as Experiment[];
+	} catch {
+		// Minimal fail-open — full hardening is issue #8.
+	}
+
+	// Identify the matching experiment so we can read its stickiness cookie.
+	const matchedExperiment = findExperimentForSlug(experiments, resolvedSlug);
+	let cookiePublicId: string | undefined;
+
+	if (matchedExperiment) {
+		const cookieName = `sb_exp_${matchedExperiment.id}`;
+		cookiePublicId = Astro.cookies.get(cookieName)?.value ?? undefined;
+	}
+
+	// Resolve: reuse the already-fetched experiments list via a simple closure.
+	const cachedExperiments = experiments;
+	const result = await resolveExperimentForRequest({
+		slug: resolvedSlug,
+		cookiePublicId,
+		fetchExperiments: async () => cachedExperiments,
+	});
+
+	storySlug = result.storySlug;
+
+	// Set the stickiness cookie when we made a fresh weighted pick.
+	if (result.persist && result.experiment && result.variant) {
+		const cookieName = `sb_exp_${result.experiment.id}`;
+		const thirtyDaysInSeconds = 60 * 60 * 24 * 30;
+		Astro.cookies.set(cookieName, result.variant.public_id, {
+			httpOnly: true,
+			sameSite: 'lax',
+			path: '/',
+			maxAge: thirtyDaysInSeconds,
+		});
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fetch the resolved story (draft for editor, published for live traffic).
+// ---------------------------------------------------------------------------
+const version = isVisualEditor ? 'draft' : 'published';
+
+const { data } = await storyblokApi.get(`cdn/stories/${storySlug}`, {
+	version,
 });
 
 const story = data.story;
