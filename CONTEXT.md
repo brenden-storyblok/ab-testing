@@ -34,4 +34,28 @@ Once assigned, a visitor keeps the same variant on repeat visits. Backed by a pe
 
 ### Override (demo)
 
-A demo affordance to force a specific variant for the current page view via `?sb_variant=<variant name>`. View-only — it does **not** write the stickiness cookie. The reserved value `?sb_variant=reset` **clears** the assignment: it ignores and deletes the stickiness cookie, shows the control (baseline) variant for the current view without persisting, and leaves the visitor unassigned (the next normal request re-assigns). An unknown variant name is ignored and normal cookie/weighted-pick resolution continues. `reset` is reserved and cannot be a variant's technical name.
+A demo affordance to force a specific variant for the current page view via `?sb_variant=<variant name>`. View-only — it does **not** write the stickiness cookie. The reserved value `?sb_variant=reset` makes the visitor a **fresh visitor**: it ignores and deletes the stickiness cookie *and* the conversion cookie, shows the control (baseline) variant for the current view without persisting, and leaves the visitor unassigned and un-converted (the next normal request re-assigns — a new **impression** — and the conversion button can fire again). An unknown variant name is ignored and normal cookie/weighted-pick resolution continues. `reset` is reserved and cannot be a variant's technical name.
+
+## Conversion Tracking
+
+Measuring how each **variant** performs by recording two visitor-level metrics and reporting them back to Storyblok as experiment **results**.
+
+### Impression
+
+A visitor being assigned a variant — i.e. seeing that variant's experience. Counted **once per visitor per experiment**, at the moment of first **assignment** (not on repeat visits). The denominator of the conversion rate.
+
+### Conversion
+
+A visitor completing the **goal** an experiment is optimising for. Counted **once per visitor per goal** — a visitor who triggers the same goal twice converts once. The numerator of the conversion rate.
+
+### Goal
+
+The named outcome a conversion is attributed to (e.g. `signup`, `cta_click`). A visitor signals a goal by interacting with a **conversion button** placed in the content. An experiment can have one or more goals.
+
+### Conversion Rate
+
+`conversions ÷ impressions` for a variant — the metric compared across variants to judge a winner. Always ≤ 100% because both are counted per unique visitor.
+
+### Results
+
+The aggregated snapshot reported to Storyblok for an experiment. Storyblok **stores and displays charts only — it does not count events itself**; this app accumulates the per-variant impression/conversion tallies, computes the conversion rate, and pushes pre-computed charts to the Management API results endpoint. See ADR-0002.
