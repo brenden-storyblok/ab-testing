@@ -13,6 +13,7 @@ import {
 	pickVariant,
 	resolveVariant,
 	resolveExperiment,
+	httpStatusFromError,
 	type Experiment,
 	type Variant,
 } from './experiments';
@@ -374,5 +375,98 @@ describe('resolveExperiment', () => {
 		expect(result.variant).toBe(controlVariant);
 		expect(result.persist).toBe(true);
 		expect(result.variantStorySlug).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Fail-open hardening (issue #8)
+//
+// The Astro route wraps the cdn/experiments fetch in a try/catch and passes an
+// empty array to resolveExperiment on any error. These tests document the
+// contract: an empty experiments list → no match → no cookie written (persist
+// false) → original story rendered unchanged.
+//
+// The variant-story fetch fallback (also #8) lives at the route boundary (an
+// async try/catch around storyblokApi.get) and is not unit-testable without
+// Astro. Its behaviour: on catch, the original story already in memory is
+// rendered and the stickiness cookie is PRESERVED (a transient failure must
+// not reset the assignment). The error is inspected via httpStatusFromError so
+// a 404 (missing/unpublished variant story) is logged as a warning while other
+// failures are logged as errors. httpStatusFromError itself is unit-tested below.
+// ---------------------------------------------------------------------------
+
+describe('resolveExperiment — fail-open: empty experiments list (cdn/experiments error path)', () => {
+	const homeStory = { id: 100, full_slug: 'home' };
+
+	it('returns no experiment and no variant when the experiments list is empty', () => {
+		const result = resolveExperiment({
+			story: homeStory,
+			experiments: [],
+		});
+		expect(result.experiment).toBeNull();
+		expect(result.variant).toBeNull();
+	});
+
+	it('returns persist:false when the experiments list is empty, so no cookie is written', () => {
+		const result = resolveExperiment({
+			story: homeStory,
+			experiments: [],
+		});
+		expect(result.persist).toBe(false);
+	});
+
+	it('returns variantStorySlug:null when the experiments list is empty, so the original story is rendered', () => {
+		const result = resolveExperiment({
+			story: homeStory,
+			experiments: [],
+		});
+		expect(result.variantStorySlug).toBeNull();
+	});
+
+	it('does not invoke the cookie reader when the experiments list is empty', () => {
+		let readerCallCount = 0;
+		resolveExperiment({
+			story: homeStory,
+			experiments: [],
+			readCookie: () => {
+				readerCallCount += 1;
+				return undefined;
+			},
+		});
+		expect(readerCallCount).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// httpStatusFromError — used by the route to distinguish a missing variant
+// story (404) from other variant-fetch failures when deciding the log level.
+// ---------------------------------------------------------------------------
+
+describe('httpStatusFromError', () => {
+	it('reads a top-level numeric status (storyblok-js-client reject shape)', () => {
+		const storyblokError = {
+			message: 'Not Found',
+			status: 404,
+			response: { status: 404 },
+		};
+		expect(httpStatusFromError(storyblokError)).toBe(404);
+	});
+
+	it('reads a non-404 status such as 500', () => {
+		expect(httpStatusFromError({ status: 500 })).toBe(500);
+	});
+
+	it('falls back to response.status when no top-level status is present', () => {
+		expect(httpStatusFromError({ response: { status: 403 } })).toBe(403);
+	});
+
+	it('returns null for a plain Error with no HTTP status (network failure)', () => {
+		expect(httpStatusFromError(new Error('network down'))).toBeNull();
+	});
+
+	it('returns null for null / undefined / non-objects', () => {
+		expect(httpStatusFromError(null)).toBeNull();
+		expect(httpStatusFromError(undefined)).toBeNull();
+		expect(httpStatusFromError('404')).toBeNull();
 	});
 });

@@ -4,6 +4,7 @@ import StoryblokComponent from '@storyblok/astro/StoryblokComponent.astro';
 import Layout from '../layouts/Layout.astro';
 import {
 	resolveExperiment,
+	httpStatusFromError,
 	type Experiment,
 } from '../lib/experiments';
 
@@ -31,7 +32,10 @@ if (!isVisualEditor) {
 		const { data: experimentsData } = await storyblokApi.get('cdn/experiments', {});
 		experiments = (experimentsData?.experiments ?? []) as Experiment[];
 	} catch {
-		// Minimal fail-open — full hardening (timeouts, variant-404) is issue #8.
+		// Fail-open: treat a throwing or unavailable experiments endpoint as an
+		// empty list. resolveExperiment with no experiments returns persist:false
+		// and variantStorySlug:null, so no cookie is set and the original story
+		// is rendered unchanged. (Issue #8.)
 	}
 
 	// Resolve the variant. IO stays here: the core reads the stickiness cookie
@@ -60,12 +64,40 @@ if (!isVisualEditor) {
 
 	// Remap to the variant story only for a non-control variant with a mapping.
 	// A null variantStorySlug means "render the original story already fetched".
+	// Fail open: if the variant story fetch fails (e.g. 404), fall back to the
+	// original story already in hand so the visitor consistently sees the control
+	// content. The stickiness cookie is left intact — a stale or orphaned cookie
+	// is harmless: an ended experiment no longer matches (findExperimentForStory
+	// returns null) and a removed variant triggers a fresh pick (resolveVariant).
 	if (decision.variantStorySlug) {
-		const { data: variantData } = await storyblokApi.get(
-			`cdn/stories/${decision.variantStorySlug}`,
-			{ version: 'published' },
-		);
-		story = variantData.story;
+		try {
+			const { data: variantData } = await storyblokApi.get(
+				`cdn/stories/${decision.variantStorySlug}`,
+				{ version: 'published' },
+			);
+			story = variantData.story;
+		} catch (variantFetchError) {
+			// Variant story unavailable — render the original story already in hand.
+			// Stickiness is preserved on purpose: a transient failure should not
+			// reset the visitor's assignment. Distinguish the cause so a missing
+			// variant story (content misconfiguration) is logged as a warning while
+			// unexpected failures (network/5xx) are logged as errors for follow-up.
+			const errorStatus = httpStatusFromError(variantFetchError);
+			const fallbackSlug = resolvedSlug;
+			if (errorStatus === 404) {
+				console.warn(
+					`[experiments] Variant story "${decision.variantStorySlug}" not found (404). ` +
+						`Falling back to the control story "${fallbackSlug}". ` +
+						`Check that the variant story is published.`,
+				);
+			} else {
+				console.error(
+					`[experiments] Failed to fetch variant story "${decision.variantStorySlug}" ` +
+						`(status ${errorStatus ?? 'unknown'}). Falling back to the control story "${fallbackSlug}".`,
+					variantFetchError,
+				);
+			}
+		}
 	}
 }
 ---

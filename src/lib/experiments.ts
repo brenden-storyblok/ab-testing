@@ -116,6 +116,33 @@ export function pickVariant(
 }
 
 /**
+ * Extract the HTTP status code from a rejected Storyblok client request.
+ *
+ * The storyblok-js-client rejects with either `{ message, status, response }`
+ * or a raw response object — both carry a top-level `status`; `response.status`
+ * is checked as a fallback. Returns null when no numeric status can be found
+ * (e.g. a thrown network/TypeError with no HTTP response).
+ */
+export function httpStatusFromError(error: unknown): number | null {
+	if (error && typeof error === 'object') {
+		const errorObject = error as {
+			status?: unknown;
+			response?: { status?: unknown };
+		};
+		if (typeof errorObject.status === 'number') {
+			return errorObject.status;
+		}
+		if (
+			errorObject.response &&
+			typeof errorObject.response.status === 'number'
+		) {
+			return errorObject.response.status;
+		}
+	}
+	return null;
+}
+
+/**
  * The slug of the story to fetch for a chosen variant, or null when the
  * original story should be rendered as-is.
  *
