@@ -8,6 +8,7 @@ import {
 	type Experiment,
 	type ResolveExperimentResult,
 } from '../lib/experiments';
+import { recordImpression } from '../lib/experiment-store';
 
 const { slug } = Astro.params;
 const resolvedSlug = slug || 'home';
@@ -58,7 +59,11 @@ if (!isVisualEditor) {
 		forcedVariantName,
 	});
 
-	// Persist the stickiness cookie on a fresh weighted pick.
+	// Persist the stickiness cookie on a fresh weighted pick, and record one
+	// impression for this new unique visitor. The impression write is awaited
+	// (a detached promise could be frozen before it flushes on serverless) but
+	// fail-open: any Blobs error is swallowed so it never prevents the page from
+	// rendering (consistent with ADR-0001 / issue #8).
 	if (experimentDecision.persist && experimentDecision.experiment && experimentDecision.variant) {
 		const thirtyDaysInSeconds = 60 * 60 * 24 * 30;
 		Astro.cookies.set(
@@ -71,6 +76,25 @@ if (!isVisualEditor) {
 				maxAge: thirtyDaysInSeconds,
 			},
 		);
+
+		// Record the impression in the Netlify Blobs metrics store. This runs only
+		// on a fresh weighted assignment (persist=true), so returning visitors whose
+		// cookie was reused (persist=false) never reach this path.
+		try {
+			await recordImpression(
+				experimentDecision.experiment.id,
+				experimentDecision.experiment.variants,
+				experimentDecision.variant.public_id,
+			);
+		} catch (impressionError) {
+			// Fail open: a Blobs error must not prevent the page from rendering.
+			// The impression is lost for this visitor, but the experiment delivery
+			// and all other functionality continue normally.
+			console.error(
+				'[experiments] Failed to record impression in Blobs metrics store — failing open.',
+				impressionError,
+			);
+		}
 	}
 
 	// Clear the stickiness cookie on a "reset" override, leaving the visitor
