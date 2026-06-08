@@ -38,13 +38,19 @@ if (!isVisualEditor) {
 		// is rendered unchanged. (Issue #8.)
 	}
 
+	// Read the demo override query parameter. A matching variant name forces
+	// that variant for this view; "reset" clears the assignment; unknown names
+	// are ignored. All of this is decided inside resolveExperiment.
+	const forcedVariantName = Astro.url.searchParams.get('sb_variant');
+
 	// Resolve the variant. IO stays here: the core reads the stickiness cookie
-	// through the injected reader and tells us whether to persist / remap.
+	// through the injected reader and tells us whether to persist / clear / remap.
 	const decision = resolveExperiment({
 		story: { id: story.id, full_slug: story.full_slug },
 		experiments,
 		readCookie: (experimentId) =>
 			Astro.cookies.get(`sb_exp_${experimentId}`)?.value ?? undefined,
+		forcedVariantName,
 	});
 
 	// Persist the stickiness cookie on a fresh weighted pick.
@@ -60,6 +66,14 @@ if (!isVisualEditor) {
 				maxAge: thirtyDaysInSeconds,
 			},
 		);
+	}
+
+	// Clear the stickiness cookie on a "reset" override, leaving the visitor
+	// unassigned. The current view renders the control (baseline) variant that
+	// resolveExperiment chose, but nothing is persisted, so the next normal
+	// request re-assigns.
+	if (decision.clearCookie && decision.experiment) {
+		Astro.cookies.delete(`sb_exp_${decision.experiment.id}`, { path: '/' });
 	}
 
 	// Remap to the variant story only for a non-control variant with a mapping.

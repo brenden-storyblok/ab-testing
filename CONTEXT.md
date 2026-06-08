@@ -34,4 +34,4 @@ Once assigned, a visitor keeps the same variant on repeat visits. Backed by a pe
 
 ### Override (demo)
 
-A demo affordance to force a specific variant for the current page view via `?sb_variant=<variant name>`. View-only — it does **not** write the stickiness cookie. `?sb_variant=reset` returns to normal weighted assignment.
+A demo affordance to force a specific variant for the current page view via `?sb_variant=<variant name>`. View-only — it does **not** write the stickiness cookie. The reserved value `?sb_variant=reset` **clears** the assignment: it ignores and deletes the stickiness cookie, shows the control (baseline) variant for the current view without persisting, and leaves the visitor unassigned (the next normal request re-assigns). An unknown variant name is ignored and normal cookie/weighted-pick resolution continues. `reset` is reserved and cannot be a variant's technical name.

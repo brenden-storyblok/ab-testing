@@ -198,6 +198,103 @@ describe('resolveVariant', () => {
 		});
 		expect(result.persist).toBe(true);
 	});
+
+	// --- forcedVariantName (issue #9) ---
+
+	it('returns the forced variant with persist:false when forcedVariantName matches by technical name', () => {
+		const result = resolveVariant({
+			experiment,
+			forcedVariantName: 'variant_a',
+		});
+		expect(result.variant).toBe(variantA);
+		expect(result.persist).toBe(false);
+	});
+
+	it('forced override takes precedence over a valid cookie', () => {
+		// Cookie points to control, but override forces variant_a.
+		const result = resolveVariant({
+			experiment,
+			cookiePublicId: 'pub-ctrl',
+			forcedVariantName: 'variant_a',
+		});
+		expect(result.variant).toBe(variantA);
+		expect(result.persist).toBe(false);
+	});
+
+	it('forced override of the control variant returns it with persist:false', () => {
+		const result = resolveVariant({
+			experiment,
+			forcedVariantName: 'control',
+		});
+		expect(result.variant).toBe(control);
+		expect(result.persist).toBe(false);
+	});
+
+	it('forcedVariantName "reset" ignores the cookie and shows control, clearing the assignment', () => {
+		// Reset must NOT reuse the cookie and must NOT re-randomise — it always
+		// shows the control variant for this view (persist:false) and signals
+		// clearCookie so the caller deletes the cookie, leaving the visitor unassigned.
+		const result = resolveVariant({
+			experiment,
+			cookiePublicId: 'pub-var-a', // would normally be reused
+			forcedVariantName: 'reset',
+			random: () => 0.999, // a weighted pick would land on variant_a — reset ignores this
+		});
+		expect(result.variant).toBe(control); // always control, never the cookie or a fresh pick
+		expect(result.variant.is_control).toBe(true);
+		expect(result.persist).toBe(false);
+		expect(result.clearCookie).toBe(true);
+	});
+
+	it('forcedVariantName "reset" shows control even when no cookie is present', () => {
+		const result = resolveVariant({
+			experiment,
+			forcedVariantName: 'reset',
+			random: () => 0.999, // ignored — reset does not re-randomise
+		});
+		expect(result.variant).toBe(control);
+		expect(result.clearCookie).toBe(true);
+		expect(result.persist).toBe(false);
+	});
+
+	it('an unknown forcedVariantName falls through to cookie/pick without clearing', () => {
+		// Unknown name — must not throw, must fall through to the cookie, and must
+		// NOT clear (clearing is reserved for the explicit "reset" keyword).
+		const result = resolveVariant({
+			experiment,
+			cookiePublicId: 'pub-var-a',
+			forcedVariantName: 'nonexistent_variant',
+		});
+		expect(result.variant).toBe(variantA);
+		expect(result.persist).toBe(false); // came from cookie
+		expect(result.clearCookie).toBe(false);
+	});
+
+	it('an unknown forcedVariantName with no cookie falls through to weighted pick', () => {
+		const result = resolveVariant({
+			experiment,
+			cookiePublicId: null,
+			forcedVariantName: 'nonexistent_variant',
+			random: () => 0, // deterministic → control
+		});
+		expect(result.variant).toBe(control);
+		expect(result.persist).toBe(true); // fresh pick
+		expect(result.clearCookie).toBe(false);
+	});
+
+	it('a named override and a cookie reuse never set clearCookie', () => {
+		const forcedResult = resolveVariant({
+			experiment,
+			forcedVariantName: 'variant_a',
+		});
+		expect(forcedResult.clearCookie).toBe(false);
+
+		const cookieResult = resolveVariant({
+			experiment,
+			cookiePublicId: 'pub-ctrl',
+		});
+		expect(cookieResult.clearCookie).toBe(false);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -375,6 +472,79 @@ describe('resolveExperiment', () => {
 		expect(result.variant).toBe(controlVariant);
 		expect(result.persist).toBe(true);
 		expect(result.variantStorySlug).toBeNull();
+	});
+
+	// --- forcedVariantName threading (issue #9) ---
+
+	it('forcing the control variant yields no variantStorySlug and persist:false', () => {
+		const result = resolveExperiment({
+			story: homeStory,
+			experiments: [experiment],
+			forcedVariantName: 'control',
+		});
+		expect(result.variant).toBe(controlVariant);
+		expect(result.variantStorySlug).toBeNull();
+		expect(result.persist).toBe(false);
+		expect(result.experiment).toBe(experiment);
+	});
+
+	it('forcing a non-control variant yields its mapped variantStorySlug and persist:false', () => {
+		const result = resolveExperiment({
+			story: homeStory,
+			experiments: [experiment],
+			forcedVariantName: 'variant_a',
+		});
+		expect(result.variant).toBe(treatmentVariant);
+		expect(result.variantStorySlug).toBe('home--test--variant-a');
+		expect(result.persist).toBe(false);
+	});
+
+	it('forcing a non-control variant overrides a cookie pointing to the control', () => {
+		// Cookie says control, but forcedVariantName says variant_a.
+		const result = resolveExperiment({
+			story: homeStory,
+			experiments: [experiment],
+			readCookie: () => 'pub-ctrl',
+			forcedVariantName: 'variant_a',
+		});
+		expect(result.variant).toBe(treatmentVariant);
+		expect(result.variantStorySlug).toBe('home--test--variant-a');
+		expect(result.persist).toBe(false);
+	});
+
+	it('forcedVariantName "reset" ignores the cookie, shows control, and signals clearCookie', () => {
+		const result = resolveExperiment({
+			story: homeStory,
+			experiments: [experiment],
+			readCookie: () => 'pub-var-a', // cookie points at the treatment variant
+			forcedVariantName: 'reset',
+			random: () => 0.999, // ignored — reset does not re-randomise
+		});
+		// Reset ignores the cookie's treatment assignment, shows the control
+		// variant this view (→ original story), persists nothing, and asks the
+		// caller to clear the stickiness cookie.
+		expect(result.variant).toBe(controlVariant);
+		expect(result.variant?.is_control).toBe(true);
+		expect(result.variantStorySlug).toBeNull(); // control → original story
+		expect(result.persist).toBe(false);
+		expect(result.clearCookie).toBe(true);
+	});
+
+	it('non-reset resolutions never set clearCookie in the orchestrator', () => {
+		const cookieResult = resolveExperiment({
+			story: homeStory,
+			experiments: [experiment],
+			readCookie: () => 'pub-ctrl',
+		});
+		expect(cookieResult.clearCookie).toBe(false);
+
+		const freshPickResult = resolveExperiment({
+			story: homeStory,
+			experiments: [experiment],
+			readCookie: () => undefined,
+			random: () => 0,
+		});
+		expect(freshPickResult.clearCookie).toBe(false);
 	});
 });
 

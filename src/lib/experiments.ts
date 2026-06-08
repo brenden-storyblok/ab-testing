@@ -167,6 +167,13 @@ export function variantSlugFor(
 // Variant resolution
 // ---------------------------------------------------------------------------
 
+/**
+ * Reserved `?sb_variant` value that clears the visitor's stickiness cookie
+ * rather than forcing a named variant. It cannot be used as a variant's
+ * technical name.
+ */
+export const RESET_VARIANT_NAME = 'reset';
+
 export interface ResolveVariantOptions {
 	experiment: Experiment;
 	/**
@@ -175,9 +182,16 @@ export interface ResolveVariantOptions {
 	 */
 	cookiePublicId?: string | null;
 	/**
-	 * Reserved for issue #9 (demo override). Providing a value here has no
-	 * effect in this slice — the parameter exists so the interface can be
-	 * extended later without a breaking change.
+	 * Demo override from `?sb_variant=<name>`:
+	 * - A value matching a variant's technical `name` (e.g. `"control"`,
+	 *   `"variant_a"`) forces that variant for this view only — returned with
+	 *   `persist: false`, so the stickiness cookie is never written.
+	 * - The reserved value `"reset"` clears any existing assignment: the cookie
+	 *   is ignored, the control (baseline) variant is shown for this view without
+	 *   persisting (`persist: false`), and `clearCookie: true` is returned so
+	 *   the caller deletes the cookie — leaving the visitor unassigned.
+	 * - Any other (unknown) name is silently ignored: normal cookie/weighted-pick
+	 *   resolution continues.
 	 */
 	forcedVariantName?: string | null;
 	/** Injectable random source; defaults to Math.random. */
@@ -188,35 +202,69 @@ export interface ResolveVariantResult {
 	variant: Variant;
 	/** True when the caller should persist the chosen variant to the cookie. */
 	persist: boolean;
+	/**
+	 * True when the caller should delete the stickiness cookie (only set by the
+	 * `"reset"` override). Mutually exclusive with `persist`.
+	 */
+	clearCookie: boolean;
 }
 
 /**
  * Determine which variant to serve for a request, given precedence rules:
- *   1. (Reserved) forcedVariantName — #9
- *   2. Valid cookie public_id → reuse, no re-persist
- *   3. Weighted pick → persist = true
+ *   1. forcedVariantName === "reset" → ignore the cookie, show the control
+ *      variant for this view (persist: false) and clearCookie: true (delete
+ *      the assignment)
+ *   2. forcedVariantName matching a variant name → force it, no persist
+ *   3. Valid cookie public_id → reuse, no re-persist
+ *   4. Weighted pick → persist = true
  *
  * A cookiePublicId that matches no current variant is treated as absent.
+ * An unknown forcedVariantName (not "reset", not a variant name) is ignored.
  */
 export function resolveVariant({
 	experiment,
 	cookiePublicId,
+	forcedVariantName,
 	random,
 }: ResolveVariantOptions): ResolveVariantResult {
+	// Reset override — clear the assignment. Ignore the cookie, show the control
+	// (baseline) variant for this view only (no persist), and signal the caller
+	// to delete the cookie so the visitor is left unassigned. Reset does not
+	// re-randomise: it always falls back to control.
+	if (forcedVariantName === RESET_VARIANT_NAME) {
+		const controlVariant =
+			experiment.variants.find((variant) => variant.is_control) ??
+			experiment.variants[0];
+		return { variant: controlVariant, persist: false, clearCookie: true };
+	}
+
+	// Named override — highest precedence after reset. Matches on the variant's
+	// technical name (not public_id). Returns with persist:false so the
+	// stickiness cookie is never written. An unknown name falls through.
+	if (forcedVariantName) {
+		const forcedVariant = experiment.variants.find(
+			(variant) => variant.name === forcedVariantName,
+		);
+		if (forcedVariant) {
+			return { variant: forcedVariant, persist: false, clearCookie: false };
+		}
+		// Unknown name — fall through to cookie/pick.
+	}
+
 	// Cookie lookup — reuse if the public_id maps to a current variant.
 	if (cookiePublicId) {
 		const existingVariant = experiment.variants.find(
 			(variant) => variant.public_id === cookiePublicId,
 		);
 		if (existingVariant) {
-			return { variant: existingVariant, persist: false };
+			return { variant: existingVariant, persist: false, clearCookie: false };
 		}
 		// Cookie is stale / unknown — fall through to weighted pick.
 	}
 
 	// Weighted pick.
 	const variant = pickVariant(experiment.variants, random);
-	return { variant, persist: true };
+	return { variant, persist: true, clearCookie: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +284,11 @@ export interface ResolveExperimentOptions {
 	readCookie?: (experimentId: number) => string | null | undefined;
 	/** Injectable random source; forwarded to resolveVariant/pickVariant. */
 	random?: () => number;
+	/**
+	 * Demo override from `?sb_variant=<name>`. Forwarded to resolveVariant.
+	 * See ResolveVariantOptions.forcedVariantName for full semantics.
+	 */
+	forcedVariantName?: string | null;
 }
 
 export interface ResolveExperimentResult {
@@ -245,6 +298,11 @@ export interface ResolveExperimentResult {
 	variant: Variant | null;
 	/** True when the caller should set/refresh the stickiness cookie. */
 	persist: boolean;
+	/**
+	 * True when the caller should delete the stickiness cookie (the `"reset"`
+	 * override). Mutually exclusive with `persist`.
+	 */
+	clearCookie: boolean;
 	/**
 	 * The slug of the variant story to fetch, or null to render the original
 	 * story already in hand (control variant, no experiment, or no mapping).
@@ -267,6 +325,7 @@ export function resolveExperiment({
 	experiments,
 	readCookie,
 	random,
+	forcedVariantName,
 }: ResolveExperimentOptions): ResolveExperimentResult {
 	const experiment = findExperimentForStory(experiments, story.id);
 	if (!experiment) {
@@ -274,14 +333,16 @@ export function resolveExperiment({
 			experiment: null,
 			variant: null,
 			persist: false,
+			clearCookie: false,
 			variantStorySlug: null,
 		};
 	}
 
 	const cookiePublicId = readCookie ? readCookie(experiment.id) : undefined;
-	const { variant, persist } = resolveVariant({
+	const { variant, persist, clearCookie } = resolveVariant({
 		experiment,
 		cookiePublicId,
+		forcedVariantName,
 		random,
 	});
 
@@ -289,6 +350,7 @@ export function resolveExperiment({
 		experiment,
 		variant,
 		persist,
+		clearCookie,
 		variantStorySlug: variantSlugFor(variant, story.full_slug),
 	};
 }
