@@ -1,5 +1,19 @@
 ---
+import { experimentDataAttributes, type Experiment, type Variant } from '../lib/experiments';
+
+interface Props {
+	/** The resolved experiment for the current page, or null/undefined for non-experiment pages. */
+	experiment?: Experiment | null;
+	/** The resolved variant for the current page, or null/undefined for non-experiment pages. */
+	variant?: Variant | null;
+}
+
+const { experiment, variant } = Astro.props;
 const currentYear = new Date().getFullYear();
+
+// Build data attributes for client-side conversion tracking. Returns an empty
+// object on non-experiment pages so the spread below is a no-op.
+const experimentAttributes = experimentDataAttributes(experiment, variant);
 ---
 
 <!doctype html>
@@ -16,7 +30,7 @@ const currentYear = new Date().getFullYear();
 		<link rel="icon" type="image/x-icon" href="/favicon.ico" />
 		<meta name="generator" content={Astro.generator} />
 	</head>
-	<body>
+	<body {...experimentAttributes}>
 		<slot />
 		<footer>All rights reserved © {currentYear}</footer>
 	</body>

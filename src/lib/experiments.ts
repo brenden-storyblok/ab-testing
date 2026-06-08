@@ -11,10 +11,10 @@
  * variant has an empty `story_mappings` array and renders the original story.
  *
  * Scope: issue #7 (sticky weighted variant assignment).
- * Deferred to other issues:
+ * Resolved in other issues:
  *   - #8: runtime fail-open hardening for fetch errors / variant-404
  *   - #9: ?sb_variant override (forcedVariantName is reserved in the options object below)
- *   - #10: data-sb-* DOM attributes
+ *   - #10: data-sb-* DOM attributes (experimentDataAttributes helper below)
  */
 
 // ---------------------------------------------------------------------------
@@ -352,5 +352,35 @@ export function resolveExperiment({
 		persist,
 		clearCookie,
 		variantStorySlug: variantSlugFor(variant, story.full_slug),
+	};
+}
+
+// ---------------------------------------------------------------------------
+// DOM data attributes (issue #10)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the HTML data attributes needed by the client-side conversion layer.
+ *
+ * Returns an empty object when either argument is absent (null or undefined) —
+ * i.e. the page is not part of a running experiment or resolution failed open.
+ * The caller can safely spread the result onto any element; an empty object is
+ * a no-op spread.
+ *
+ * Returns `{ 'data-sb-experiment': String(experiment.id), 'data-sb-variant': variant.public_id }`
+ * when both arguments are present. The experiment id (numeric) is used as the
+ * attribute value because it matches the `sb_exp_<id>` cookie key and the
+ * Management API results endpoint — not the human-readable name.
+ */
+export function experimentDataAttributes(
+	experiment: Experiment | null | undefined,
+	variant: Variant | null | undefined,
+): Record<string, string> {
+	if (!experiment || !variant) {
+		return {};
+	}
+	return {
+		'data-sb-experiment': String(experiment.id),
+		'data-sb-variant': variant.public_id,
 	};
 }
