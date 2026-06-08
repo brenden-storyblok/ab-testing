@@ -172,13 +172,17 @@ describe('seedRoster', () => {
 		expect(result.counts['pub-var-a']).toEqual({ impressions: 3, conversions: 1 });
 	});
 
-	it('preserves existing counts for known variants and initialises new variants to zero', () => {
+	it('is a no-op once a roster exists — does not rebuild it or add newly introduced variants', () => {
+		// Seed-once semantics: a variant added after the first write is NOT folded
+		// into the roster. This keeps writes cheap and never discards counts; the
+		// trade-off (mid-run variant changes are not reflected) is documented in
+		// seedRoster and ADR-0002.
 		const newVariant = makeVariant({
 			public_id: 'pub-var-b',
 			display_name: 'Variant B',
 			is_control: false,
 		});
-		const metricsWithExistingCounts = makeMetrics({
+		const seededMetrics = makeMetrics({
 			roster: [
 				{ public_id: 'pub-ctrl', display_name: 'Control', is_control: true, order: 0 },
 			],
@@ -187,10 +191,12 @@ describe('seedRoster', () => {
 			},
 		});
 
-		const result = seedRoster(metricsWithExistingCounts, [controlVariant, newVariant]);
+		const result = seedRoster(seededMetrics, [controlVariant, newVariant]);
 
-		expect(result.counts['pub-ctrl']).toEqual({ impressions: 10, conversions: 3 });
-		expect(result.counts['pub-var-b']).toEqual({ impressions: 0, conversions: 0 });
+		// Returned unchanged — same reference, no rebuild, no new variant added.
+		expect(result).toBe(seededMetrics);
+		expect(result.roster).toHaveLength(1);
+		expect(result.counts['pub-var-b']).toBeUndefined();
 	});
 
 	it('does not mutate the input record', () => {
