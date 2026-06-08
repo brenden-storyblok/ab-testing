@@ -13,6 +13,7 @@ import {
 	pickVariant,
 	resolveVariant,
 	resolveExperiment,
+	experimentDataAttributes,
 	httpStatusFromError,
 	type Experiment,
 	type Variant,
@@ -604,6 +605,88 @@ describe('resolveExperiment — fail-open: empty experiments list (cdn/experimen
 			},
 		});
 		expect(readerCallCount).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// experimentDataAttributes (issue #10)
+//
+// Pure helper — returns the data-sb-* attributes for the DOM when an experiment
+// is active, or an empty object (no-op spread) on non-experiment pages.
+// ---------------------------------------------------------------------------
+
+describe('experimentDataAttributes', () => {
+	const controlVariant = makeVariant({
+		name: 'control',
+		public_id: 'pub-ctrl',
+		is_control: true,
+	});
+	const treatmentVariant = makeVariant({
+		name: 'variant_a',
+		public_id: 'pub-var-a',
+		is_control: false,
+	});
+	const experiment = makeExperiment({
+		id: 42,
+		variants: [controlVariant, treatmentVariant],
+	});
+
+	it('returns the correct attributes when both experiment and variant are present', () => {
+		const attributes = experimentDataAttributes(experiment, controlVariant);
+		expect(attributes).toEqual({
+			'data-sb-experiment': '42',
+			'data-sb-variant': 'pub-ctrl',
+		});
+	});
+
+	it('uses the experiment numeric id (not name) as the attribute value', () => {
+		const attributes = experimentDataAttributes(experiment, controlVariant);
+		expect(attributes['data-sb-experiment']).toBe('42');
+		expect(attributes['data-sb-experiment']).not.toBe('test-experiment');
+	});
+
+	it('uses the variant public_id as the attribute value', () => {
+		const attributes = experimentDataAttributes(experiment, treatmentVariant);
+		expect(attributes['data-sb-variant']).toBe('pub-var-a');
+	});
+
+	it('returns an empty object when experiment is null', () => {
+		const attributes = experimentDataAttributes(null, controlVariant);
+		expect(attributes).toEqual({});
+	});
+
+	it('returns an empty object when variant is null', () => {
+		const attributes = experimentDataAttributes(experiment, null);
+		expect(attributes).toEqual({});
+	});
+
+	it('returns an empty object when both arguments are null', () => {
+		const attributes = experimentDataAttributes(null, null);
+		expect(attributes).toEqual({});
+	});
+
+	it('returns an empty object when experiment is undefined', () => {
+		const attributes = experimentDataAttributes(undefined, controlVariant);
+		expect(attributes).toEqual({});
+	});
+
+	it('returns an empty object when variant is undefined', () => {
+		const attributes = experimentDataAttributes(experiment, undefined);
+		expect(attributes).toEqual({});
+	});
+
+	it('returns a plain object with exactly two keys on an experiment page', () => {
+		const attributes = experimentDataAttributes(experiment, controlVariant);
+		expect(Object.keys(attributes)).toHaveLength(2);
+		expect(Object.keys(attributes)).toContain('data-sb-experiment');
+		expect(Object.keys(attributes)).toContain('data-sb-variant');
+	});
+
+	it('serialises the experiment id as a string even though the domain type is number', () => {
+		const numericIdExperiment = makeExperiment({ id: 99 });
+		const attributes = experimentDataAttributes(numericIdExperiment, controlVariant);
+		expect(typeof attributes['data-sb-experiment']).toBe('string');
+		expect(attributes['data-sb-experiment']).toBe('99');
 	});
 });
 
