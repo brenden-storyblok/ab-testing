@@ -1,7 +1,14 @@
 /**
  * experiments.ts — Framework-agnostic functional core for Storyblok Experiments.
  *
- * No Astro imports, no direct network calls. All IO is injected.
+ * No Astro imports, no network calls. All IO (story/experiments fetching,
+ * cookie access) is performed by the caller and injected where needed.
+ *
+ * Delivery flow (per the Storyblok docs): fetch the story first, then match an
+ * experiment by `experiment.story_ids.includes(story.id)`, pick a variant, and
+ * — only for non-control variants — remap to the variant story via the
+ * variant's `story_mappings` (matched on `story.full_slug`). The control
+ * variant has an empty `story_mappings` array and renders the original story.
  *
  * Scope: issue #7 (sticky weighted variant assignment).
  * Deferred to other issues:
@@ -27,6 +34,7 @@ export interface Variant {
 	public_id: string;
 	weight: number;
 	is_control: boolean;
+	/** Empty for the control variant; populated for non-control variants. */
 	story_mappings: StoryMapping[];
 }
 
@@ -34,8 +42,15 @@ export interface Experiment {
 	id: number;
 	name: string;
 	display_name: string;
+	/** IDs of the original (source) stories this experiment is linked to. */
 	story_ids: number[];
 	variants: Variant[];
+}
+
+/** The minimal story shape the core needs to make a decision. */
+export interface StoryRef {
+	id: number;
+	full_slug: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -43,23 +58,21 @@ export interface Experiment {
 // ---------------------------------------------------------------------------
 
 /**
- * Find the first experiment whose variants contain a story_mapping with the
- * given original_slug. Returns null if no match.
+ * Find the running experiment that includes the given story, matching on the
+ * numeric story id against `experiment.story_ids`. Returns null if none match.
+ *
+ * This mirrors the documented delivery pattern
+ * (`experiments.find(e => e.story_ids.includes(story.id))`) and is a flat
+ * lookup rather than a nested scan of every variant's story_mappings.
  */
-export function findExperimentForSlug(
+export function findExperimentForStory(
 	experiments: Experiment[],
-	slug: string,
+	storyId: number,
 ): Experiment | null {
-	for (const experiment of experiments) {
-		for (const variant of experiment.variants) {
-			for (const mapping of variant.story_mappings) {
-				if (mapping.original_slug === slug) {
-					return experiment;
-				}
-			}
-		}
-	}
-	return null;
+	return (
+		experiments.find((experiment) => experiment.story_ids.includes(storyId)) ??
+		null
+	);
 }
 
 /**
@@ -78,19 +91,22 @@ export function pickVariant(
 		return variants[0];
 	}
 
-	const total = variants.reduce((sum, v) => sum + (v.weight ?? 0), 0);
+	const totalWeight = variants.reduce(
+		(runningTotal, variant) => runningTotal + (variant.weight ?? 0),
+		0,
+	);
 
 	// Guard: if all weights are zero, fall back to uniform selection.
-	if (total === 0) {
-		const idx = Math.floor(random() * variants.length);
-		return variants[idx];
+	if (totalWeight === 0) {
+		const fallbackIndex = Math.floor(random() * variants.length);
+		return variants[fallbackIndex];
 	}
 
-	const roll = random() * total;
-	let cumulative = 0;
+	const roll = random() * totalWeight;
+	let cumulativeWeight = 0;
 	for (const variant of variants) {
-		cumulative += variant.weight ?? 0;
-		if (roll < cumulative) {
+		cumulativeWeight += variant.weight ?? 0;
+		if (roll < cumulativeWeight) {
 			return variant;
 		}
 	}
@@ -100,16 +116,24 @@ export function pickVariant(
 }
 
 /**
- * Return the variant_slug for the given original_slug in this variant's
- * story_mappings. If no mapping found, returns the original slug unchanged.
+ * The slug of the story to fetch for a chosen variant, or null when the
+ * original story should be rendered as-is.
+ *
+ * Returns null for the control variant (which has no story_mappings) and for
+ * any variant lacking a mapping for this story's full_slug. Otherwise returns
+ * the mapping's variant_slug.
  */
-export function mappedSlugFor(variant: Variant, slug: string): string {
-	for (const mapping of variant.story_mappings) {
-		if (mapping.original_slug === slug) {
-			return mapping.variant_slug;
-		}
+export function variantSlugFor(
+	variant: Variant,
+	originalFullSlug: string,
+): string | null {
+	if (variant.is_control) {
+		return null;
 	}
-	return slug;
+	const mapping = variant.story_mappings.find(
+		(storyMapping) => storyMapping.original_slug === originalFullSlug,
+	);
+	return mapping?.variant_slug ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,11 +178,11 @@ export function resolveVariant({
 }: ResolveVariantOptions): ResolveVariantResult {
 	// Cookie lookup — reuse if the public_id maps to a current variant.
 	if (cookiePublicId) {
-		const existing = experiment.variants.find(
-			(v) => v.public_id === cookiePublicId,
+		const existingVariant = experiment.variants.find(
+			(variant) => variant.public_id === cookiePublicId,
 		);
-		if (existing) {
-			return { variant: existing, persist: false };
+		if (existingVariant) {
+			return { variant: existingVariant, persist: false };
 		}
 		// Cookie is stale / unknown — fall through to weighted pick.
 	}
@@ -169,77 +193,75 @@ export function resolveVariant({
 }
 
 // ---------------------------------------------------------------------------
-// Async orchestrator
+// Orchestrator (pure — IO is injected)
 // ---------------------------------------------------------------------------
 
-export interface ResolveExperimentForRequestOptions {
-	slug: string;
+export interface ResolveExperimentOptions {
+	/** The already-fetched original story (only id + full_slug are needed). */
+	story: StoryRef;
+	/** Running experiments from cdn/experiments (already fetched by the caller). */
+	experiments: Experiment[];
 	/**
-	 * The public_id read from the per-experiment cookie for this experiment,
-	 * if it exists. Pass null / undefined if absent.
+	 * Reads the stickiness cookie value (variant public_id) for a given
+	 * experiment id. Injected so the core stays pure and testable; the Astro
+	 * route supplies one backed by Astro.cookies. Return undefined/null if absent.
 	 */
-	cookiePublicId?: string | null;
-	/**
-	 * IO seam — injected function that fetches the running experiments list.
-	 * Must return only running experiments (the CDN API already filters these).
-	 */
-	fetchExperiments: () => Promise<Experiment[]>;
+	readCookie?: (experimentId: number) => string | null | undefined;
 	/** Injectable random source; forwarded to resolveVariant/pickVariant. */
 	random?: () => number;
 }
 
-export interface ResolveExperimentForRequestResult {
-	/** The story slug to fetch — either the original or the variant's mapped slug. */
-	storySlug: string;
-	/** The matched experiment, or null if no experiment matched. */
+export interface ResolveExperimentResult {
+	/** The matched experiment, or null if the story is in no running experiment. */
 	experiment: Experiment | null;
 	/** The chosen variant, or null if no experiment matched. */
 	variant: Variant | null;
 	/** True when the caller should set/refresh the stickiness cookie. */
 	persist: boolean;
+	/**
+	 * The slug of the variant story to fetch, or null to render the original
+	 * story already in hand (control variant, no experiment, or no mapping).
+	 */
+	variantStorySlug: string | null;
 }
 
 /**
- * Async orchestrator: fetch experiments → match slug → resolve variant → map slug.
+ * Decide how to deliver a story: match an experiment by story id, resolve a
+ * variant (cookie reuse or weighted pick), and report whether the original
+ * story should be remapped to a variant story.
  *
- * On no match, returns { storySlug: slug, experiment: null, variant: null, persist: false }.
- *
- * Note: Minimal error handling is intentional here. Full fail-open hardening
- * (fetch timeouts, variant-story 404s) is tracked in issue #8.
+ * Pure and synchronous: the caller fetches the story and experiments, supplies
+ * a cookie reader, then acts on the result (set the cookie, fetch the variant
+ * story). On no match, returns nulls and `variantStorySlug: null` so the
+ * caller renders the original story unchanged.
  */
-export async function resolveExperimentForRequest({
-	slug,
-	cookiePublicId,
-	fetchExperiments,
+export function resolveExperiment({
+	story,
+	experiments,
+	readCookie,
 	random,
-}: ResolveExperimentForRequestOptions): Promise<ResolveExperimentForRequestResult> {
-	const noMatch: ResolveExperimentForRequestResult = {
-		storySlug: slug,
-		experiment: null,
-		variant: null,
-		persist: false,
-	};
-
-	let experiments: Experiment[];
-	try {
-		experiments = await fetchExperiments();
-	} catch {
-		// Minimal fail-open — full hardening is issue #8.
-		return noMatch;
-	}
-
-	const experiment = findExperimentForSlug(experiments, slug);
+}: ResolveExperimentOptions): ResolveExperimentResult {
+	const experiment = findExperimentForStory(experiments, story.id);
 	if (!experiment) {
-		return noMatch;
+		return {
+			experiment: null,
+			variant: null,
+			persist: false,
+			variantStorySlug: null,
+		};
 	}
 
+	const cookiePublicId = readCookie ? readCookie(experiment.id) : undefined;
 	const { variant, persist } = resolveVariant({
 		experiment,
 		cookiePublicId,
 		random,
 	});
 
-	const storySlug = mappedSlugFor(variant, slug);
-
-	return { storySlug, experiment, variant, persist };
+	return {
+		experiment,
+		variant,
+		persist,
+		variantStorySlug: variantSlugFor(variant, story.full_slug),
+	};
 }

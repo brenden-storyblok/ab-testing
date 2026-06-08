@@ -20,7 +20,9 @@ The baseline variant (`is_control: true`) — the original experience measured a
 
 ### Story Mapping
 
-The pairing inside a variant that says "when the visitor would see `original_slug`, serve `variant_slug` instead." Resolving the right story for a chosen variant means looking up the mapping for the current request's slug.
+The pairing inside a **non-control** variant that says "when the visitor would see `original_slug`, serve `variant_slug` instead." The **control** variant has an empty `story_mappings` array — it always renders the original story.
+
+Matching follows the Storyblok delivery pattern: an experiment is matched to a story by **story id** (`experiment.story_ids` includes the fetched `story.id`), and the variant story is then resolved by looking up the mapping whose `original_slug` equals the story's `full_slug`.
 
 ### Assignment
 
