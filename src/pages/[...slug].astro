@@ -22,10 +22,26 @@ const version = isVisualEditor ? 'draft' : 'published';
 
 // Fetch the requested story first. Its id and full_slug drive experiment
 // matching and variant-story remapping (per the Storyblok delivery docs).
-const { data: storyData } = await storyblokApi.get(`cdn/stories/${resolvedSlug}`, {
-	version,
-});
-let story = storyData.story;
+//
+// This catch-all route matches every path the browser requests, including
+// non-story probes like `/.well-known/appspecific/com.chrome.devtools.json`
+// (sent by Chrome DevTools) and scanner/typo traffic. Those slugs have no
+// matching story, so the delivery API rejects with a 404. Translate that into
+// a real 404 response instead of letting it bubble up as an unhandled 500 — a
+// missing story is "not found", not a server error. Any non-404 failure
+// (network, 5xx) is rethrown so genuine outages still surface as 5xx.
+let story;
+try {
+	const { data: storyData } = await storyblokApi.get(`cdn/stories/${resolvedSlug}`, {
+		version,
+	});
+	story = storyData.story;
+} catch (storyFetchError) {
+	if (httpStatusFromError(storyFetchError) === 404) {
+		return new Response(`Not found: ${resolvedSlug}`, { status: 404 });
+	}
+	throw storyFetchError;
+}
 
 // Holds the experiment resolution result when experiments are active (non-editor
 // live traffic). Stays null in the Visual Editor so Layout renders no attributes.
@@ -97,12 +113,14 @@ if (!isVisualEditor) {
 		}
 	}
 
-	// Clear the stickiness cookie on a "reset" override, leaving the visitor
-	// unassigned. The current view renders the control (baseline) variant that
+	// Clear the stickiness cookie AND the conversion cookie on a "reset" override,
+	// leaving the visitor unassigned and un-converted (a fully fresh visitor).
+	// The current view renders the control (baseline) variant that
 	// resolveExperiment chose, but nothing is persisted, so the next normal
-	// request re-assigns.
+	// request re-assigns and the conversion button can fire again.
 	if (experimentDecision.clearCookie && experimentDecision.experiment) {
 		Astro.cookies.delete(`sb_exp_${experimentDecision.experiment.id}`, { path: '/' });
+		Astro.cookies.delete(`sb_conv_${experimentDecision.experiment.id}`, { path: '/' });
 	}
 
 	// Remap to the variant story only for a non-control variant with a mapping.

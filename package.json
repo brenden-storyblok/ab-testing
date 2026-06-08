@@ -5,6 +5,7 @@
 	"private": true,
 	"scripts": {
 		"dev": "astro dev",
+		"dev:netlify": "DISABLE_DEV_HTTPS=1 astro dev",
 		"build": "astro build",
 		"preview": "astro preview",
 		"astro": "astro",
@@ -22,6 +23,7 @@
 	"dependencies": {
 		"@astrojs/netlify": "^7.0.4",
 		"@astrojs/vercel": "^10.0.2",
-		"@netlify/blobs": "^10.7.9"
+		"@netlify/blobs": "^10.7.9",
+		"storyblok-js-client": "^7.3.0"
 	}
 }

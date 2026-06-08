@@ -161,3 +161,158 @@ export function applyImpression(
 	const metricsWithRoster = seedRoster(metrics, variants);
 	return incrementImpression(metricsWithRoster, assignedVariantPublicId);
 }
+
+// ---------------------------------------------------------------------------
+// Conversion counting (issue #17)
+// ---------------------------------------------------------------------------
+
+/**
+ * Increment the conversion count for the given variant.
+ *
+ * If the variant is not yet present in `counts` (e.g. a visitor arrived before
+ * the roster was seeded), its entry is initialised to { impressions: 0,
+ * conversions: 1 }. The roster is not modified here.
+ *
+ * Returns a new metrics record — the input is not mutated.
+ */
+export function incrementConversion(
+	metrics: ExperimentMetrics,
+	variantPublicId: string,
+): ExperimentMetrics {
+	const existingCount = metrics.counts[variantPublicId] ?? {
+		impressions: 0,
+		conversions: 0,
+	};
+
+	return {
+		...metrics,
+		counts: {
+			...metrics.counts,
+			[variantPublicId]: {
+				...existingCount,
+				conversions: existingCount.conversions + 1,
+			},
+		},
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Chart building (issue #17)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single data series in a bar chart — a named array of numeric values whose
+ * indices correspond to the chart's `labels` array. The Management API names
+ * the human-readable field `label`.
+ */
+export interface ChartSeries {
+	label: string;
+	data: number[];
+}
+
+/**
+ * A bar chart object in the shape expected by the Storyblok Management API
+ * results endpoint (`POST spaces/:space_id/experiments/:experiment_id/results`).
+ *
+ * Field names match the Management API exactly: `kind` is always `"bar"`;
+ * `title` is the chart heading shown in Storyblok; `labels` is the x-axis
+ * (variant display names in control-first order); `series` is one or more
+ * data series each keyed by `label`; `xLabel`/`yLabel` are axis captions.
+ */
+export interface ResultsChart {
+	kind: 'bar';
+	title: string;
+	labels: string[];
+	series: ChartSeries[];
+	xLabel?: string;
+	yLabel?: string;
+}
+
+/**
+ * Build the two result charts from the current experiment metrics.
+ *
+ * Chart 1 — "Conversion rate by variant": a single series with one rate per
+ * variant. Rate = conversions ÷ impressions, rounded to four decimal places.
+ * Guarded for zero impressions (rate = 0).
+ *
+ * Chart 2 — "Impressions & conversions by variant": two series — impressions
+ * (denominator) and conversions (numerator) — to convey sample size.
+ *
+ * Both charts order variants control-first (is_control = true, then by `order`
+ * ascending). Labels are variant `display_name` from the roster.
+ *
+ * Returns null when the roster is empty (no roster means no meaningful chart
+ * can be built). The caller should treat a null result as a skip-push signal.
+ *
+ * Pure function — reads only from the metrics input; never throws.
+ */
+export function buildResultsCharts(
+	metrics: ExperimentMetrics,
+): [ResultsChart, ResultsChart] | null {
+	if (metrics.roster.length === 0) {
+		return null;
+	}
+
+	// Sort: control first, then ascending by insertion order.
+	const sortedRoster = [...metrics.roster].sort((entryA, entryB) => {
+		if (entryA.is_control !== entryB.is_control) {
+			return entryA.is_control ? -1 : 1;
+		}
+		return entryA.order - entryB.order;
+	});
+
+	const labels = sortedRoster.map((entry) => entry.display_name);
+
+	const conversionRates = sortedRoster.map((entry) => {
+		const variantCount = metrics.counts[entry.public_id];
+		const impressionCount = variantCount?.impressions ?? 0;
+		const conversionCount = variantCount?.conversions ?? 0;
+		if (impressionCount === 0) {
+			return 0;
+		}
+		// Round to four decimal places so the float stays human-readable in charts.
+		return Math.round((conversionCount / impressionCount) * 10000) / 10000;
+	});
+
+	const impressionCounts = sortedRoster.map((entry) => {
+		return metrics.counts[entry.public_id]?.impressions ?? 0;
+	});
+
+	const conversionCounts = sortedRoster.map((entry) => {
+		return metrics.counts[entry.public_id]?.conversions ?? 0;
+	});
+
+	const conversionRateChart: ResultsChart = {
+		kind: 'bar',
+		title: 'Conversion rate by variant',
+		labels,
+		series: [
+			{
+				label: 'Conversion rate',
+				data: conversionRates,
+			},
+		],
+		xLabel: 'Variant',
+		yLabel: 'Conversion rate',
+	};
+
+	const volumeChart: ResultsChart = {
+		kind: 'bar',
+		title: 'Impressions & conversions by variant',
+		labels,
+		series: [
+			{
+				label: 'Impressions',
+				data: impressionCounts,
+			},
+			{
+				label: 'Conversions',
+				data: conversionCounts,
+			},
+		],
+		xLabel: 'Variant',
+		yLabel: 'Count',
+	};
+
+	return [conversionRateChart, volumeChart];
+}
