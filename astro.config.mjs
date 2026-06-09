@@ -33,6 +33,7 @@ export default defineConfig({
 				grid: 'storyblok/Grid',
 				feature: 'storyblok/Feature',
 				teaser: 'storyblok/Teaser',
+				conversion_button: 'storyblok/ConversionButton',
 			},
 		}),
 	],

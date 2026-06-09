@@ -1,0 +1,70 @@
+---
+/**
+ * ConversionButton.astro — Storyblok-driven conversion button component.
+ *
+ * Renders a <button> with the editor-set label. On click, reads the experiment
+ * assignment the server rendered onto <body> and POSTs
+ * `{ experimentId, variantPublicId }` to `/api/conversion` (issue #17). On a
+ * page with no active experiment (attributes absent), the click is inert — no
+ * request is issued and no navigation occurs.
+ *
+ * Scope: issue #18 (conversion button component).
+ */
+import { storyblokEditable } from '@storyblok/astro';
+const { blok } = Astro.props;
+---
+
+<button
+	class="conversion-button"
+	type="button"
+	data-conversion-button
+	{...storyblokEditable(blok)}
+>
+	{blok.label}
+</button>
+
+<script>
+	// A single controller arms — and tears down — every listener this script
+	// registers. The site currently does full page loads, so navigation tears
+	// listeners down anyway; aborting on `astro:before-swap` keeps this correct
+	// if Astro's ClientRouter (View Transitions) is ever enabled, since that
+	// event fires before the old DOM (and these buttons) are swapped out.
+	const controller = new AbortController();
+	const { signal } = controller;
+
+	document.querySelectorAll('[data-conversion-button]').forEach((button) => {
+		button.addEventListener(
+			'click',
+			(event) => {
+				// Never navigate or submit a surrounding form.
+				event.preventDefault();
+
+				// These attribute names MUST match experimentDataAttributes() in
+				// src/lib/experiments.ts, which writes 'data-sb-experiment' and
+				// 'data-sb-variant' onto <body>. Reading the literal attribute
+				// strings (not the camelCased `dataset` keys) keeps that match
+				// obvious.
+				const experimentId = document.body.getAttribute('data-sb-experiment');
+				const variantPublicId = document.body.getAttribute('data-sb-variant');
+
+				// No active experiment on this page → inert.
+				if (!experimentId || !variantPublicId) {
+					return;
+				}
+
+				void fetch('/api/conversion', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ experimentId, variantPublicId }),
+				});
+			},
+			{ signal },
+		);
+	});
+
+	// Deregister every listener above on teardown (a ClientRouter navigation).
+	document.addEventListener('astro:before-swap', () => controller.abort(), {
+		once: true,
+		signal,
+	});
+</script>

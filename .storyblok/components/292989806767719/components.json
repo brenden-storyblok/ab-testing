@@ -1,5 +1,37 @@
 [
   {
+    "name": "conversion_button",
+    "display_name": "Conversion Button",
+    "description": null,
+    "created_at": "2026-06-09T14:28:02.364Z",
+    "updated_at": "2026-06-09T14:28:02.364Z",
+    "id": 185653994974306,
+    "schema": {
+      "label": {
+        "type": "text",
+        "display_name": "Label",
+        "required": true,
+        "description": "Button text shown to the visitor, e.g. \"Sign up\" or \"Get started\".",
+        "id": "-0PFjbdqSHyWFt4sQWwWHA"
+      }
+    },
+    "image": null,
+    "preview_field": null,
+    "is_root": false,
+    "preview_tmpl": null,
+    "is_nestable": true,
+    "all_presets": [],
+    "preset_id": null,
+    "real_name": "Conversion Button",
+    "component_group_uuid": null,
+    "color": "#FF5722",
+    "icon": "block-buttons",
+    "internal_tags_list": [],
+    "internal_tag_ids": [],
+    "content_type_asset_preview": null,
+    "metadata": {}
+  },
+  {
     "name": "feature",
     "display_name": null,
     "description": null,
