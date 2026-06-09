@@ -42,6 +42,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 	try {
 		requestBody = await request.json();
 	} catch {
+		console.warn('[experiments] Conversion request rejected: invalid JSON body.');
 		return new Response(
 			JSON.stringify({ status: 'error', message: 'Invalid JSON body.' }),
 			{ status: 400, headers: { 'Content-Type': 'application/json' } },
@@ -54,6 +55,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 		!('experimentId' in requestBody) ||
 		!('variantPublicId' in requestBody)
 	) {
+		console.warn(
+			'[experiments] Conversion request rejected: missing experimentId and/or variantPublicId.',
+		);
 		return new Response(
 			JSON.stringify({
 				status: 'error',
@@ -77,6 +81,10 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 		typeof variantPublicId !== 'string' ||
 		variantPublicId.trim() === ''
 	) {
+		console.warn(
+			`[experiments] Conversion request rejected: invalid types ` +
+				`(experimentId=${JSON.stringify(rawExperimentId)}, variantPublicId=${JSON.stringify(variantPublicId)}).`,
+		);
 		return new Response(
 			JSON.stringify({
 				status: 'error',
@@ -87,6 +95,10 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 		);
 	}
 
+	console.log(
+		`[experiments] Conversion request received: experiment ${experimentId}, variant ${variantPublicId}.`,
+	);
+
 	// --------------------------------------------------------------------------
 	// 2. Deduplication: check for an existing conversion cookie.
 	// --------------------------------------------------------------------------
@@ -96,6 +108,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
 	if (existingConversionCookie?.value) {
 		// Already converted — no-op. Return success so the button stays silent.
+		console.log(
+			`[experiments] Conversion ignored: visitor already converted for experiment ${experimentId}.`,
+		);
 		return new Response(
 			JSON.stringify({ status: 'already_converted' }),
 			{ status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -127,8 +142,17 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 	try {
 		const updatedMetrics = await recordConversion(experimentId, variantPublicId);
 
+		const variantCount = updatedMetrics.counts[variantPublicId];
+		console.log(
+			`[experiments] Conversion recorded for experiment ${experimentId}, variant ${variantPublicId} — ` +
+				`${variantCount?.conversions ?? '?'} conversions / ${variantCount?.impressions ?? '?'} impressions.`,
+		);
+
 		try {
 			await pushResultsCharts(experimentId, updatedMetrics);
+			console.log(
+				`[experiments] Results charts pushed to Storyblok for experiment ${experimentId}.`,
+			);
 		} catch (pushError) {
 			// MAPI push failed. The Blobs count was already written — the tally is
 			// accurate, just not yet reflected in Storyblok. Log and continue.
