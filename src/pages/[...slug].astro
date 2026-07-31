@@ -2,12 +2,43 @@
 import { useStoryblokApi } from '@storyblok/astro';
 import StoryblokComponent from '@storyblok/astro/StoryblokComponent.astro';
 import Layout from '../layouts/Layout.astro';
+import { createExperiments } from '@storyblok/experiments';
+import { getRunningExperiments } from '../lib/experiments';
 
-const { slug } = Astro.params;
+const originalSlug = Astro.params.slug || 'home';
+// Storyblok appends `_storyblok` when rendering inside the Visual Editor.
+const isVisualEditor = Astro.url.searchParams.has('_storyblok');
 
 const storyblokApi = useStoryblokApi();
-const { data } = await storyblokApi.get(`cdn/stories/${slug || 'home'}`, {
-	version: 'draft'
+const runningExperiments = await getRunningExperiments(storyblokApi);
+
+let slug = originalSlug;
+
+if (!isVisualEditor) {
+	const experiments = createExperiments({
+		experiments: runningExperiments,
+		adapters: [],
+	});
+	const resolved = experiments.resolveExperiment({
+		slug: originalSlug,
+		visitorId: Astro.locals.visitorId,
+	});
+
+	slug = resolved.slug;
+
+	// A control assignment also yields a `variant` (with `is_control: true`),
+	// leaving the slug unchanged. The header appearing for control visitors
+	// is correct and intended.
+	if (resolved.variant) {
+		Astro.response.headers.set(
+			'x-storyblok-variant',
+			`${resolved.variant.name} (${resolved.variant.public_id})`,
+		);
+	}
+}
+
+const { data } = await storyblokApi.get(`cdn/stories/${slug}`, {
+	version: 'draft',
 });
 
 const story = data.story;
