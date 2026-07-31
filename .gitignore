@@ -1,5 +1,7 @@
 # build output
 dist/
+.vercel/
+.netlify/
 
 # generated types
 .astro/
@@ -15,3 +17,5 @@ npm-debug.log*
 
 # macOS-specific files
 .DS_Store
+certificates/
+.storyblok/logs/
