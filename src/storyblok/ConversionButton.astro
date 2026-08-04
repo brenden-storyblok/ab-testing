@@ -1,0 +1,12 @@
+---
+import { storyblokEditable } from "@storyblok/astro";
+import type { $brand, $input } from "astro:schema";
+
+const {blok} = Astro.props;
+const conversionPayload = Astro.locals.conversionPayload;
+
+---
+<button class="conversion-button" data-event={conversionPayload} {...storyblokEditable(blok)}>
+    {blok.label}
+</button>
+

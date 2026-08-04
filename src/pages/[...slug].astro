@@ -4,6 +4,7 @@ import StoryblokComponent from '@storyblok/astro/StoryblokComponent.astro';
 import Layout from '../layouts/Layout.astro';
 import { createExperiments } from '@storyblok/experiments';
 import { getRunningExperiments } from '../lib/experiments';
+import { fetchAdapter } from '@storyblok/experiments/adapters';
 
 const originalSlug = Astro.params.slug || 'home';
 // Storyblok appends `_storyblok` when rendering inside the Visual Editor.
@@ -17,13 +18,33 @@ let slug = originalSlug;
 if (!isVisualEditor) {
 	const experiments = createExperiments({
 		experiments: runningExperiments,
-		adapters: [],
+		adapters: [fetchAdapter(new URL('/api/experiments', Astro.url).toString())],
+		onError: (error) => console.error(error)
 	});
 	const resolved = experiments.resolveExperiment({
 		slug: originalSlug,
 		visitorId: Astro.locals.visitorId,
 	});
+	// `resolved` is `{ slug, variant? }`, so I repeat the library's own lookup
+	// to get the experiment id and name.
+	const experiment = runningExperiments.find((candidate) =>
+		candidate.variants.some((variant) =>
+			variant.story_mappings.some((mapping) => mapping.original_slug === originalSlug),
+		),
+	);
 
+	await experiments.flush();
+	const conversionPayload = resolved.variant && experiment
+		? JSON.stringify({
+				type: 'conversion',
+				experiment: { id: experiment.id, name: experiment.name },
+				variant: { name: resolved.variant.name, public_id: resolved.variant.public_id },
+				props: { visitorId: Astro.locals.visitorId },
+			})
+		: undefined;
+	if (conversionPayload) {
+		Astro.locals.conversionPayload = conversionPayload;
+	}
 	slug = resolved.slug;
 
 	// A control assignment also yields a `variant` (with `is_control: true`),
@@ -47,3 +68,11 @@ const story = data.story;
 <Layout>
 	<StoryblokComponent blok={story.content} />
 </Layout>
+
+<script>
+	document.querySelectorAll<HTMLElement>('[data-event]').forEach((element) =>
+		element.addEventListener('click', () =>
+			navigator.sendBeacon('/api/experiments', element.dataset.event),
+		),
+	);
+</script>

@@ -4,7 +4,7 @@
 	"version": "0.1.0",
 	"private": true,
 	"scripts": {
-		"dev": "astro dev",
+		"dev": "NODE_EXTRA_CA_CERTS=$HOME/.vite-plugin-mkcert/rootCA.pem astro dev",
 		"build": "astro build",
 		"preview": "astro preview",
 		"astro": "astro"
@@ -18,6 +18,7 @@
 	"dependencies": {
 		"@astrojs/netlify": "^7.0.4",
 		"@astrojs/vercel": "^10.0.2",
-		"@storyblok/experiments": "^1.0.1"
+		"@storyblok/experiments": "^1.1.0",
+		"@storyblok/management-api-client": "^0.7.0"
 	}
 }

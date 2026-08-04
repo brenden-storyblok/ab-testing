@@ -34,11 +34,12 @@ export default defineConfig({
 				grid: 'storyblok/Grid',
 				feature: 'storyblok/Feature',
 				teaser: 'storyblok/Teaser',
+				conversionButton: 'storyblok/ConversionButton',
 			},
 		}),
 	],
 	output: 'server',
-	adapter: NETLIFY ? netlify() : vercel(),
+	adapter: NETLIFY ? netlify() : undefined,
 	vite: {
 		plugins: [mkcert()],
 	},
