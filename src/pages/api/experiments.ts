@@ -1,45 +1,25 @@
 import type { APIRoute } from 'astro';
-import type { ExperimentEvent } from '@storyblok/experiments';
-import { recordConversion, recordImpression } from '../../lib/experiments';
+import { useStoryblokApi } from '@storyblok/astro';
+import { countOnce, getExperimentsClient } from '../../lib/experiments';
 
-/** A visitor converts at most once per experiment per month. */
-const CONVERSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
-
-export const POST: APIRoute = async ({ request, cookies }) => {
-	const event = (await request.json()) as ExperimentEvent;
-	console.log('event', event);
-	const experimentId = event.experiment?.id;
-	// Exposures come from the library adapter, which carries the technical name
-	// and public_id only, so both event types label bars with the technical name.
-	const variantLabel = event.variant?.name;
-
-	if (!experimentId || !variantLabel) {
+export const POST: APIRoute = async ({ request, cookies, locals }) => {
+	const { goal } = (await request.json()) as { goal?: string };
+	if (!goal) {
 		return Response.json({ status: 'ignored' }, { status: 400 });
 	}
 
-	if (event.type === 'exposure') {
-		await recordImpression(experimentId, variantLabel);
-		return Response.json({ status: 'ok' });
-	}
+	const client = await getExperimentsClient(useStoryblokApi());
 
-	if (event.type === 'conversion') {
-		const cookieName = `sb_conv_${experimentId}`;
-		if (cookies.has(cookieName)) {
-			console.log('already_converted');
-			return Response.json({ status: 'already_converted' });
-		}
+	// `createEvent` buckets the visitor and builds the conversion events without
+	// delivering them, so the visitor's cookies still get a say before anything
+	// is recorded. `track` is the same thing plus immediate delivery, for when
+	// there is nothing to filter.
+	const events = client.createEvent(goal, locals.visitorId);
+	const fresh = events.filter((event) => countOnce(cookies, 'conv', event.experiment.id));
 
-		// Set before recording so a failed write cannot let the visitor
-		// convert twice.
-		cookies.set(cookieName, '1', {
-			httpOnly: true,
-			sameSite: 'lax',
-			path: '/',
-			maxAge: CONVERSION_COOKIE_MAX_AGE,
-		});
-		await recordConversion(experimentId, variantLabel);
-		return Response.json({ status: 'ok' });
-	}
+	// Await delivery: this response ends the invocation, and a serverless runtime
+	// drops whatever is still in flight when it does.
+	await Promise.all(fresh.map((event) => client.send(event)));
 
-	return Response.json({ status: 'ignored' }, { status: 400 });
+	return Response.json({ status: 'ok', recorded: fresh.length, skipped: events.length - fresh.length });
 };

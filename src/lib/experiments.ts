@@ -1,6 +1,7 @@
 import type { AstroCookies } from 'astro';
-import type { Experiment } from '@storyblok/experiments';
+import type { Adapter, Experiment, Experiments } from '@storyblok/experiments';
 import type { useStoryblokApi } from '@storyblok/astro';
+import { createExperiments } from '@storyblok/experiments';
 import { createManagementApiClient } from "@storyblok/management-api-client";
 
 
@@ -35,6 +36,58 @@ export async function getRunningExperiments(
 ): Promise<Experiment[]> {
 	const { data } = await storyblokApi.get('cdn/experiments');
 	return data.experiments ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// The experiments client
+//
+// The factory holds no per-visitor state, so one instance is shared across
+// requests instead of built per render. That is what lets the API route below
+// record a conversion for a click that arrives long after the render is gone.
+//
+// The running experiments are cached with a short TTL because the payload is
+// the only thing the instance binds, and refetching it per request would cost a
+// CAPI call on every page view.
+// ---------------------------------------------------------------------------
+
+const EXPERIMENTS_TTL = 60_000;
+
+let cache: { at: number; pending: Promise<Experiments> } | undefined;
+
+/**
+ * The sink. A plain function rather than `fetchAdapter`, since posting to our
+ * own `/api/experiments` would cost a second serverless invocation per event.
+ *
+ * Both event types arrive here: the exposure from the page render, the
+ * conversion from the API route. Deduplication happens at the call sites, which
+ * hold the visitor's cookies; a bar chart has no visitor dimension to dedupe on.
+ */
+const chartAdapter: Adapter = async (event) => {
+	if (event.type === 'exposure') {
+		await recordImpression(event.experiment.id, event.variant.name);
+		return;
+	}
+	await recordConversion(event.experiment.id, event.variant.name);
+};
+
+export function getExperimentsClient(
+	storyblokApi: ReturnType<typeof useStoryblokApi>,
+): Promise<Experiments> {
+	if (cache && Date.now() - cache.at < EXPERIMENTS_TTL) {
+		return cache.pending;
+	}
+
+	const pending = getRunningExperiments(storyblokApi).then((experiments) =>
+		createExperiments({
+			experiments,
+			adapters: [chartAdapter],
+			onError: (error, event) =>
+				console.error(`[experiments] delivery failed for ${event.type}`, error),
+		}),
+	);
+
+	cache = { at: Date.now(), pending };
+	return pending;
 }
 
 export async function getExperimentCharts(experimentId: number): Promise<ResultsChart[]> {
@@ -124,8 +177,36 @@ async function recordEvent(
 	}
 }
 
+/** A visitor counts once per experiment per month, for both metrics. */
+const SEEN_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
+
 /**
- * Count one exposure. Every render fires one, so this counts views, not visitors.
+ * Marks the visitor as counted for one experiment and one metric, and reports
+ * whether they already were. Both bars have to count visitors the same way, or
+ * the conversion rate compares per-visitor conversions against per-view
+ * impressions and reads far too low.
+ */
+export function countOnce(
+	cookies: AstroCookies,
+	metric: 'exp' | 'conv',
+	experimentId: number,
+): boolean {
+	const name = `sb_${metric}_${experimentId}`;
+	if (cookies.has(name)) {
+		return false;
+	}
+	// Set before recording, so a failed write cannot let the visitor count twice.
+	cookies.set(name, '1', {
+		httpOnly: true,
+		sameSite: 'lax',
+		path: '/',
+		maxAge: SEEN_COOKIE_MAX_AGE,
+	});
+	return true;
+}
+
+/**
+ * Count one exposure. Callers gate on `countOnce`, so this counts visitors.
  *
  * `variantLabel` labels the bar and identifies the variant across events: pass
  * `display_name`, or `name` when the caller only holds the event payload.
@@ -143,8 +224,7 @@ export async function recordImpression(
 
 /**
  * Count one conversion. See recordImpression for `variantLabel`.
- * The caller dedupes: `src/pages/api/experiments.ts` checks the visitor's
- * conversion cookie before calling this.
+ * The caller dedupes: `src/pages/api/experiments.ts` calls `countOnce` first.
  */
 export async function recordConversion(
 	experimentId: number,
