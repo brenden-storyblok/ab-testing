@@ -18,7 +18,7 @@
 	"dependencies": {
 		"@astrojs/netlify": "^7.0.4",
 		"@astrojs/vercel": "^10.0.2",
-		"@storyblok/experiments": "https://pkg.pr.new/storyblok/monoblok/@storyblok/experiments@2d3674c",
+		"@storyblok/experiments": "https://pkg.pr.new/storyblok/monoblok/@storyblok/experiments@eb0b5bd",
 		"@storyblok/management-api-client": "^0.7.0"
 	}
 }
