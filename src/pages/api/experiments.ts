@@ -10,16 +10,20 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
 
 	const client = await getExperimentsClient(useStoryblokApi());
 
-	// `createEvent` buckets the visitor and builds the conversion events without
-	// delivering them, so the visitor's cookies still get a say before anything
-	// is recorded. `track` is the same thing plus immediate delivery, for when
-	// there is nothing to filter.
-	const events = client.createEvent(goal, locals.visitorId);
-	const fresh = events.filter((event) => countOnce(cookies, 'conv', event.experiment.id));
+	// Every experiment this visitor is bucketed into, recomputed from the
+	// visitorId alone. Nothing is delivered yet, so the visitor's cookies get a
+	// say before anything is recorded. `track` is these three steps with no
+	// filter in between, for when there is nothing to check.
+	const assignments = client.assignments(locals.visitorId);
+	const fresh = assignments.filter((assignment) => countOnce(cookies, 'conv', assignment.experiment.id));
 
 	// Await delivery: this response ends the invocation, and a serverless runtime
 	// drops whatever is still in flight when it does.
-	await Promise.all(fresh.map((event) => client.send(event)));
+	await Promise.all(fresh.map((assignment) => client.send(client.createEvent(goal, assignment))));
 
-	return Response.json({ status: 'ok', recorded: fresh.length, skipped: events.length - fresh.length });
+	return Response.json({
+		status: 'ok',
+		recorded: fresh.length,
+		skipped: assignments.length - fresh.length,
+	});
 };
