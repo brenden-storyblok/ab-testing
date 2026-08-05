@@ -18,6 +18,7 @@ npm-debug.log*
 
 # Local Netlify folder
 .netlify
+.vercel
 
 certificates/
 
