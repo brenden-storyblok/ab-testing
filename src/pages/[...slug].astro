@@ -2,50 +2,34 @@
 import { useStoryblokApi } from '@storyblok/astro';
 import StoryblokComponent from '@storyblok/astro/StoryblokComponent.astro';
 import Layout from '../layouts/Layout.astro';
-import { createExperiments } from '@storyblok/experiments';
-import { getRunningExperiments } from '../lib/experiments';
-import { fetchAdapter } from '@storyblok/experiments/adapters';
+import { countOnce, getExperimentsClient } from '../lib/experiments';
 
 const originalSlug = Astro.params.slug || 'home';
 // Storyblok appends `_storyblok` when rendering inside the Visual Editor.
 const isVisualEditor = Astro.url.searchParams.has('_storyblok');
 
 const storyblokApi = useStoryblokApi();
-const runningExperiments = await getRunningExperiments(storyblokApi);
 
 let slug = originalSlug;
 
 if (!isVisualEditor) {
-	const experiments = createExperiments({
-		experiments: runningExperiments,
-		adapters: [fetchAdapter(new URL('/api/experiments', Astro.url).toString())],
-		onError: (error) => console.error(error)
-	});
-	const resolved = experiments.resolveExperiment({
+	const client = await getExperimentsClient(storyblokApi);
+	// `exposure: false` hands back the event instead of delivering it, so the
+	// visitor's cookies get a say first. The assignment is unaffected: the visitor
+	// still sees the same variant on every view, only the impression is counted
+	// once, which is what makes it comparable to the once-counted conversion.
+	const resolved = client.resolveExperiment({
 		slug: originalSlug,
 		visitorId: Astro.locals.visitorId,
+		exposure: false,
 	});
-	// `resolved` is `{ slug, variant? }`, so I repeat the library's own lookup
-	// to get the experiment id and name.
-	const experiment = runningExperiments.find((candidate) =>
-		candidate.variants.some((variant) =>
-			variant.story_mappings.some((mapping) => mapping.original_slug === originalSlug),
-		),
-	);
-
-	await experiments.flush();
-	const conversionPayload = resolved.variant && experiment
-		? JSON.stringify({
-				type: 'conversion',
-				experiment: { id: experiment.id, name: experiment.name },
-				variant: { name: resolved.variant.name, public_id: resolved.variant.public_id },
-				props: { visitorId: Astro.locals.visitorId },
-			})
-		: undefined;
-	if (conversionPayload) {
-		Astro.locals.conversionPayload = conversionPayload;
-	}
 	slug = resolved.slug;
+
+	// Awaiting the send, rather than `flush()`: the instance is shared, so
+	// `flush()` would also wait on other requests' deliveries.
+	if (resolved.exposure && countOnce(Astro.cookies, 'exp', resolved.exposure.experiment.id)) {
+		await client.send(resolved.exposure);
+	}
 
 	// A control assignment also yields a `variant` (with `is_control: true`),
 	// leaving the slug unchanged. The header appearing for control visitors
@@ -70,9 +54,15 @@ const story = data.story;
 </Layout>
 
 <script>
-	document.querySelectorAll<HTMLElement>('[data-event]').forEach((element) =>
+	// Send the goal only. The server derives the experiment, the variant, and the
+	// visitor, so the payload is tiny and a visitor cannot forge which variant
+	// converted. `sendBeacon` survives the unload a link or a form submit causes.
+	document.querySelectorAll<HTMLElement>('[data-goal]').forEach((element) =>
 		element.addEventListener('click', () =>
-			navigator.sendBeacon('/api/experiments', element.dataset.event),
+			navigator.sendBeacon(
+				'/api/experiments',
+				JSON.stringify({ goal: element.dataset.goal }),
+			),
 		),
 	);
 </script>

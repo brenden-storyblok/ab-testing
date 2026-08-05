@@ -1,12 +1,13 @@
 ---
 import { storyblokEditable } from "@storyblok/astro";
-import type { $brand, $input } from "astro:schema";
 
 const {blok} = Astro.props;
-const conversionPayload = Astro.locals.conversionPayload;
+// Just the goal. The button no longer needs the page render to have resolved an
+// experiment and handed it a payload through `Astro.locals`.
+const goal = blok.goal || 'signup';
 
 ---
-<button class="conversion-button" data-event={conversionPayload} {...storyblokEditable(blok)}>
+<button class="conversion-button" data-goal={goal} {...storyblokEditable(blok)}>
     {blok.label}
 </button>
 
