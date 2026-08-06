@@ -4,8 +4,9 @@ import { countOnce, getExperimentsClient } from '../../lib/experiments';
 
 export const POST: APIRoute = async ({ request, cookies, locals }) => {
 	const { goal } = (await request.json()) as { goal?: string };
-	if (!goal) {
-		return Response.json({ status: 'ignored' }, { status: 400 });
+
+	if (!goal || locals.isVisualEditor) {
+		return Response.json({ status: 'ignored' }, { status: 200 });
 	}
 
 	const client = await getExperimentsClient(useStoryblokApi());

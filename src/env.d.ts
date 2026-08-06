@@ -3,5 +3,6 @@
 declare namespace App {
 	interface Locals {
 		visitorId: string;
+		isVisualEditor: boolean;
 	}
 }

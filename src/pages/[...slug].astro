@@ -6,7 +6,7 @@ import { countOnce, getExperimentsClient } from '../lib/experiments';
 
 const originalSlug = Astro.params.slug || 'home';
 // Storyblok appends `_storyblok` when rendering inside the Visual Editor.
-const isVisualEditor = Astro.url.searchParams.has('_storyblok');
+const isVisualEditor = Astro.locals.isVisualEditor;
 
 const storyblokApi = useStoryblokApi();
 
