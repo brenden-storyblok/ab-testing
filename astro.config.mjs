@@ -39,7 +39,7 @@ export default defineConfig({
 		}),
 	],
 	output: 'server',
-	adapter: NETLIFY ? netlify() : undefined,
+	adapter: netlify(),
 	vite: {
 		plugins: [mkcert()],
 	},
