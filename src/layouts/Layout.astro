@@ -1,4 +1,5 @@
 ---
+import { StoryblokPreview } from '@storyblok/astro';
 const currentYear = new Date().getFullYear();
 ---
 
@@ -19,5 +20,6 @@ const currentYear = new Date().getFullYear();
 	<body>
 		<slot />
 		<footer>All rights reserved © {currentYear}</footer>
+		<StoryblokPreview liveUpdate />
 	</body>
 </html>

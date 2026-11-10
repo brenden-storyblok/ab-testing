@@ -1,19 +1,21 @@
 ---
-import { useStoryblokApi } from '@storyblok/astro';
-import StoryblokComponent from '@storyblok/astro/StoryblokComponent.astro';
 import Layout from '../layouts/Layout.astro';
 import { countOnce, getExperimentsClient } from '../lib/experiments';
+import { getPayload } from '@storyblok/astro';
+import { apiClient, StoryblokBlock } from '../storyblok';
 
 const originalSlug = Astro.params.slug || 'home';
 // Storyblok appends `_storyblok` when rendering inside the Visual Editor.
 const isVisualEditor = Astro.locals.isVisualEditor;
 
-const storyblokApi = useStoryblokApi();
+// During a `liveUpdate` re-render the editor POSTs the edited story. Skip the
+// experiment flow on those, whether or not the referer check caught them.
+const payload = await getPayload({ locals: Astro.locals });
 
 let slug = originalSlug;
 
-if (!isVisualEditor) {
-	const client = await getExperimentsClient(storyblokApi);
+if (!isVisualEditor && !payload.story) {
+	const client = await getExperimentsClient();
 	// `exposure: false` hands back the event instead of delivering it, so the
 	// visitor's cookies get a say first. The assignment is unaffected: the visitor
 	// still sees the same variant on every view, only the impression is counted
@@ -42,15 +44,17 @@ if (!isVisualEditor) {
 	}
 }
 
-const { data } = await storyblokApi.get(`cdn/stories/${slug}`, {
-	version: 'draft',
-});
+const story =
+	payload.story ??
+	(await apiClient.stories.get(slug, { query: { version: 'draft' } })).data?.story;
 
-const story = data.story;
+if (!story) {
+	return new Response(null, { status: 404 });
+}
 ---
 
 <Layout>
-	<StoryblokComponent blok={story.content} />
+	<StoryblokBlock block={story.content} />
 </Layout>
 
 <script>
