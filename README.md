@@ -23,7 +23,7 @@ On top of that, this project adds:
 > [Experiments](https://www.storyblok.com/docs/concepts/experiments) is a premium beta feature, enabled per space under **Settings > Labs**.
 
 > [!TIP]
-> Follow our [Astro guide](https://www.storyblok.com/docs/guides/astro/) for a step-by-step walkthrough and learn more about Storyblok's range of features, including rich text rendering, custom content modeling, and internationalization. See the [@storyblok/astro package reference](https://storyblok.com/docs/packages/storyblok-astro) for further information.
+> Follow our [Astro guide](https://www.storyblok.com/docs/guides/astro/) for a step-by-step walkthrough and learn more about Storyblok's range of features, including rich text rendering, custom content modeling, and internationalization. See the [@storyblok/astro package reference](https://www.storyblok.com/docs/libraries/js/astro-sdk) for further information.
 
 ---
 

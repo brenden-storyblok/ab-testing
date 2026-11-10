@@ -1,8 +1,8 @@
 import type { AstroCookies } from 'astro';
 import type { Adapter, Experiment, Experiments } from '@storyblok/experiments';
-import type { useStoryblokApi } from '@storyblok/astro';
 import { createExperiments } from '@storyblok/experiments';
 import { createManagementApiClient } from "@storyblok/management-api-client";
+import { apiClient } from '../storyblok';
 
 
 const managmentClient = createManagementApiClient({
@@ -31,11 +31,9 @@ export function readOrMintVisitorId(cookies: AstroCookies): string {
 	return visitorId;
 }
 
-export async function getRunningExperiments(
-	storyblokApi: ReturnType<typeof useStoryblokApi>,
-): Promise<Experiment[]> {
-	const { data } = await storyblokApi.get('cdn/experiments');
-	return data.experiments ?? [];
+export async function getRunningExperiments(): Promise<Experiment[]> {
+	const { data } = await apiClient.experiments.list();
+	return data?.experiments ?? [];
 }
 
 // ---------------------------------------------------------------------------
@@ -70,14 +68,12 @@ const chartAdapter: Adapter = async (event) => {
 	await recordConversion(event.experiment.id, event.variant.name);
 };
 
-export function getExperimentsClient(
-	storyblokApi: ReturnType<typeof useStoryblokApi>,
-): Promise<Experiments> {
+export function getExperimentsClient(): Promise<Experiments> {
 	if (cache && Date.now() - cache.at < EXPERIMENTS_TTL) {
 		return cache.pending;
 	}
 
-	const pending = getRunningExperiments(storyblokApi).then((experiments) =>
+	const pending = getRunningExperiments().then((experiments) =>
 		createExperiments({
 			experiments,
 			adapters: [chartAdapter],

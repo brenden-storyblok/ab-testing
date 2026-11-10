@@ -1,5 +1,4 @@
 import type { APIRoute } from 'astro';
-import { useStoryblokApi } from '@storyblok/astro';
 import { countOnce, getExperimentsClient } from '../../lib/experiments';
 
 export const POST: APIRoute = async ({ request, cookies, locals }) => {
@@ -9,7 +8,7 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
 		return Response.json({ status: 'ignored' }, { status: 200 });
 	}
 
-	const client = await getExperimentsClient(useStoryblokApi());
+	const client = await getExperimentsClient();
 
 	// Every experiment this visitor is bucketed into, recomputed from the
 	// visitorId alone. Nothing is delivered yet, so the visitor's cookies get a

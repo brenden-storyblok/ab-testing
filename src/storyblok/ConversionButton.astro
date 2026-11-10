@@ -1,13 +1,10 @@
 ---
-import { storyblokEditable } from "@storyblok/astro";
-
-const {blok} = Astro.props;
+const { block, editable } = Astro.props;
 // Just the goal. The button no longer needs the page render to have resolved an
 // experiment and handed it a payload through `Astro.locals`.
-const goal = blok.goal || 'signup';
+const goal = block.goal || 'signup';
 
 ---
-<button class="conversion-button" data-goal={goal} {...storyblokEditable(blok)}>
-    {blok.label}
+<button class="conversion-button" data-goal={goal} {...editable}>
+    {block.label}
 </button>
-
